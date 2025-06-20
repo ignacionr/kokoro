@@ -11,6 +11,7 @@ import kokoro
 import time
 import psutil
 from text_splitter import split_text_for_tts, safe_tts_chunks
+from datetime import datetime, timedelta, timezone
 
 def get_weather(api_key, city="Montevideo,UY"):
     """Fetch weather data from OpenWeatherMap for a given city (default: Montevideo,UY)."""
@@ -19,18 +20,59 @@ def get_weather(api_key, city="Montevideo,UY"):
     resp.raise_for_status()
     return resp.json()
 
+def format_decimal(value):
+    """Format a float as Spanish text with 'punto' instead of dot for decimals."""
+    s = f"{value:.2f}".replace('.', ' punto ')
+    # Remove trailing '00' if integer
+    if s.endswith(' punto 00'):
+        s = s[:-8]
+    return s
+
+def format_timestamp(ts, tz_offset):
+    """Format a Unix timestamp and timezone offset as a Spanish datetime string for Montevideo."""
+    dt = datetime.utcfromtimestamp(ts) + timedelta(seconds=tz_offset)
+    return dt.strftime('%H:%M:%S del %d/%m/%Y')
+
 def ollama_weather_report(weather_json):
     """Generate a Spanish weather report using Ollama LLM from weather JSON, with no markup/tags."""
+    tz_offset = weather_json.get('timezone', 0)
+    dt_str = format_timestamp(weather_json['dt'], tz_offset)
+    sunrise_str = format_timestamp(weather_json['sys']['sunrise'], tz_offset)
+    sunset_str = format_timestamp(weather_json['sys']['sunset'], tz_offset)
+    temp = format_decimal(weather_json['main']['temp'])
+    feels_like = format_decimal(weather_json['main']['feels_like'])
+    temp_min = format_decimal(weather_json['main']['temp_min'])
+    temp_max = format_decimal(weather_json['main']['temp_max'])
+    humidity = weather_json['main']['humidity']
+    wind_speed = format_decimal(weather_json['wind']['speed'])
+    clouds = weather_json['clouds']['all']
+    city = weather_json['name']
+    country = weather_json['sys']['country']
+    weather_desc = weather_json['weather'][0]['description']
+    visibility = weather_json.get('visibility', None)
     prompt = (
-        "Eres un meteorólogo profesional. Escribe un informe del tiempo completo en español, "
-        "usando los siguientes datos JSON de OpenWeatherMap. Sé claro, natural y detallado. "
-        "Agrega recomendaciones sobre cómo vestirse según el clima de hoy. "
-        "No uses ningún tipo de marcado, etiquetas, ni formato especial: solo texto plano, ya que el resultado será leído por un sistema TTS.\n"
-        f"Datos: {json.dumps(weather_json, ensure_ascii=False)}"
+        f"Eres una meteoróloga uruguaya joven y simpática. Escribe un informe del tiempo completo pero breve en español, "
+        f"usando exclusivamente los siguientes datos ya preformateados para Montevideo, Uruguay. Sé clara, fresca, natural y un poco conversacional, como si hablaras con amigos o familia. "
+        f"Cuando menciones números decimales, usa la palabra 'punto' en vez del símbolo. "
+        f"Haz el informe más interesante y útil para el público general, agregando explicaciones o consejos prácticos sobre el clima, pero sin inventar datos. "
+        f"Hora local actual: {dt_str}. "
+        f"Salida del sol: {sunrise_str}. "
+        f"Puesta del sol: {sunset_str}. "
+        f"Temperatura actual: {temp} grados Celsius. "
+        f"Sensación térmica: {feels_like} grados. "
+        f"Temperatura mínima: {temp_min} grados, máxima: {temp_max} grados. "
+        f"Humedad: {humidity} por ciento. "
+        f"Viento: {wind_speed} kilómetros por hora. "
+        f"Nubosidad: {clouds} por ciento. "
+        f"Condición principal: {weather_desc}. "
+        + (f"Visibilidad: {visibility} metros. " if visibility is not None else "")
+        + "No uses ningún tipo de marcado, etiquetas, ni formato especial: solo texto plano, ya que el resultado será leído por un sistema TTS. "
+        + "No inventes ni asumas datos que no estén explícitamente presentes arriba. "
+        + "Redacta el informe de forma natural y humana, explicando el significado de los valores para el público general."
     )
     ollama_url = "http://localhost:11434/api/generate"
     data = {
-        "model": "qwen3:0.6b",  # Updated to use qwen3:0.6b
+        "model": "gemma3:4b",
         "prompt": prompt,
         "stream": False
     }
